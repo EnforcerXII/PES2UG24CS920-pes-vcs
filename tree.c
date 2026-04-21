@@ -144,4 +144,9 @@ int tree_from_index(ObjectID *id_out) {
         te->hash = index.entries[i].hash;
         strcpy(te->name, index.entries[i].path);
     }
+
+    // 1. Prepare the binary data
+    void *buffer = NULL;
+    size_t len = 0;
+    if (tree_serialize(&tree, &buffer, &len) != 0) return -1;
 }
