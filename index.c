@@ -223,3 +223,26 @@ int index_add(Index *index, const char *path) {
         return -1;
     }
     free(buf);
+
+    // 3. Get file metadata for the index entry
+        struct stat st;
+        if (lstat(path, &st) != 0) return -1;
+
+        // 4. Update existing entry or add a new one
+        IndexEntry *entry = index_find(index, path);
+        if (!entry) {
+            // Ensure we don't overflow the index
+            if (index->count >= MAX_INDEX_ENTRIES) return -1;
+            entry = &index->entries[index->count++];
+            strncpy(entry->path, path, sizeof(entry->path) - 1);
+        }
+
+        // Update metadata and hash
+        entry->mode = (uint32_t)st.st_mode; // Or use get_file_mode(path) from tree.c
+        entry->hash = blob_id;
+        entry->mtime_sec = (uint64_t)st.st_mtime;
+        entry->size = (uint32_t)size;
+
+        // 5. Save changes to disk
+        return index_save(index);
+}
