@@ -141,4 +141,17 @@ int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_
     if (!data_start) { free(full_buf); return -1; }
     data_start++; // Move past \0
 
+    if (strncmp(header, "blob", 4) == 0) *type_out = OBJ_BLOB;
+    else if (strncmp(header, "tree", 4) == 0) *type_out = OBJ_TREE;
+    else *type_out = OBJ_COMMIT;
+
+    // 3. Extract Data
+    *len_out = file_size - (data_start - (char *)full_buf);
+    *data_out = malloc(*len_out);
+    memcpy(*data_out, data_start, *len_out);
+
+    free(full_buf);
+    return 0;
+
+
 }
