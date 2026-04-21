@@ -195,8 +195,31 @@ int index_save(const Index *index) {
 //
 // Returns 0 on success, -1 on error.
 int index_add(Index *index, const char *path) {
-    // TODO: Implement file staging
-    // (See Lab Appendix for logical steps)
-    (void)index; (void)path;
-    return -1;
-}
+    // 1. Read the file to be staged
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        perror("fopen");
+        return -1;
+    }
+
+    // Get file size
+    fseek(f, 0, SEEK_END);
+    size_t size = ftell(f);
+    rewind(f);
+
+    // Read contents into memory
+    void *buf = malloc(size);
+    if (fread(buf, 1, size, f) != size) {
+        free(buf);
+        fclose(f);
+        return -1;
+    }
+    fclose(f);
+
+    // 2. Write the file contents to the object store as a BLOB
+    ObjectID blob_id;
+    if (object_write(OBJ_BLOB, buf, size, &blob_id) != 0) {
+        free(buf);
+        return -1;
+    }
+    free(buf);
