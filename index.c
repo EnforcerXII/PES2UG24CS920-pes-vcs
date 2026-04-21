@@ -60,7 +60,7 @@ int index_remove(Index *index, const char *path) {
 int index_status(const Index *index) {
     printf("Staged changes:\n");
     int staged_count = 0;
-    // Note: A true Git implementation deeply diffs against the HEAD tree here. 
+    // Note: A true Git implementation deeply diffs against the HEAD tree here.
     // For this lab, displaying indexed files represents the staging intent.
     for (int i = 0; i < index->count; i++) {
         printf("  staged:     %s\n", index->entries[i].path);
@@ -103,11 +103,11 @@ int index_status(const Index *index) {
             int is_tracked = 0;
             for (int i = 0; i < index->count; i++) {
                 if (strcmp(index->entries[i].path, ent->d_name) == 0) {
-                    is_tracked = 1; 
+                    is_tracked = 1;
                     break;
                 }
             }
-            
+
             if (!is_tracked) {
                 struct stat st;
                 stat(ent->d_name, &st);
@@ -135,10 +135,23 @@ int index_status(const Index *index) {
 //
 // Returns 0 on success, -1 on error.
 int index_load(Index *index) {
-    // TODO: Implement index loading
-    // (See Lab Appendix for logical steps)
-    (void)index;
-    return -1;
+
+    index->count = 0;
+    FILE *f = fopen(INDEX_FILE, "r");
+    if (!f) return 0; // Empty index is fine
+
+    while (index->count < MAX_INDEX_ENTRIES) {
+        IndexEntry *e = &index->entries[index->count];
+        char hex[HASH_HEX_SIZE + 1];
+        if (fscanf(f, "%o %64s %llu %u %511s\n",
+            &e->mode, hex, (unsigned long long *)&e->mtime_sec, &e->size, e->path) != 5) break;
+
+        hex_to_hash(hex, &e->hash);
+        index->count++;
+    }
+
+    fclose(f);
+    return 0;
 }
 
 // Save the index to .pes/index atomically.
