@@ -123,4 +123,22 @@ int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_
     size_t file_size = ftell(f);
     rewind(f);
 
+    uint8_t *full_buf = malloc(file_size);
+    fread(full_buf, 1, file_size, f);
+    fclose(f);
+
+    // 1. Integrity Check
+    ObjectID actual_id;
+    compute_hash(full_buf, file_size, &actual_id);
+    if (memcmp(id->hash, actual_id.hash, HASH_SIZE) != 0) {
+        free(full_buf);
+        return -1;
+    }
+
+    // 2. Parse Header
+    char *header = (char *)full_buf;
+    char *data_start = memchr(header, '\0', file_size);
+    if (!data_start) { free(full_buf); return -1; }
+    data_start++; // Move past \0
+
 }
