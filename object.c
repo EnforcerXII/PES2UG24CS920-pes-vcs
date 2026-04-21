@@ -96,4 +96,31 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
         dir[15] = '\0';
         mkdir(dir, 0755);
 
+    // 4. Atomic Write: Write to .tmp then rename
+    char tmp_path[520];
+    sprintf(tmp_path, "%s.tmp", path);
+    FILE *f = fopen(tmp_path, "wb");
+    if (!f) { free(full_data); return -1; }
+
+    fwrite(full_data, 1, total_len, f);
+    fclose(f);
+    rename(tmp_path, path);
+
+    free(full_data);
+    return 0;
+
+}
+
+int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_t *len_out) {
+    char path[512];
+    object_path(id, path, sizeof(path));
+
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+
+    // Get file size
+    fseek(f, 0, SEEK_END);
+    size_t file_size = ftell(f);
+    rewind(f);
+
 }
