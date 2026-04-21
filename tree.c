@@ -149,4 +149,14 @@ int tree_from_index(ObjectID *id_out) {
     void *buffer = NULL;
     size_t len = 0;
     if (tree_serialize(&tree, &buffer, &len) != 0) return -1;
+
+    // 2. Commit the tree object to the store
+
+    if (object_write(OBJ_TREE, buffer, len, id_out) != 0) {
+        free(buffer);
+        return -1;
+    }
+
+    free(buffer);
+    return 0;
 }
