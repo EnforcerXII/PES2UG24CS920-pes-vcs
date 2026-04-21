@@ -86,4 +86,14 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     memcpy(full_data + header_len, data, len);
     compute_hash(full_data, total_len, id_out);
 
+    // 3. Determine path: .pes/objects/XX/YYYY...
+        char path[512];
+        object_path(id_out, path, sizeof(path));
+
+        // Create directory (sharding)
+        char dir[512];
+        strncpy(dir, path, 15); // Extracts ".pes/objects/XX"
+        dir[15] = '\0';
+        mkdir(dir, 0755);
+
 }
