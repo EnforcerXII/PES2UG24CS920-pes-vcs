@@ -24,6 +24,12 @@
 #include <unistd.h>
 #include <dirent.h>
 
+#define MODE_FILE 0100644
+#define MODE_EXEC 0100755
+
+// Forward declaration (implemented in object.c)
+int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out);
+
 // ─── PROVIDED ────────────────────────────────────────────────────────────────
 
 // Find an index entry by path (linear scan).
@@ -127,52 +133,46 @@ int index_status(const Index *index) {
 
 // ─── TODO: Implement these ───────────────────────────────────────────────────
 
-// Load the index from .pes/index.
-//
-// HINTS - Useful functions:
-//   - fopen (with "r"), fscanf, fclose : reading the text file line by line
-//   - hex_to_hash                      : converting the parsed string to ObjectID
-//
-// Returns 0 on success, -1 on Aerror.
-int index_load(Index *index) {
+static int compare_index_entries(const void *a, const void *b) {
+    const IndexEntry *ea = (const IndexEntry *)a;
+    const IndexEntry *eb = (const IndexEntry *)b;
+    return strcmp(ea->path, eb->path);
+}
 
+int index_load(Index *index) {
     index->count = 0;
     FILE *f = fopen(INDEX_FILE, "r");
-    if (!f) return 0; // Empty index is fine
+    if (!f) return 0; // Empty index is acceptable
 
     while (index->count < MAX_INDEX_ENTRIES) {
         IndexEntry *e = &index->entries[index->count];
         char hex[HASH_HEX_SIZE + 1];
+        // Format: <mode> <hash> <mtime> <size> <path>
         if (fscanf(f, "%o %64s %llu %u %511s\n",
             &e->mode, hex, (unsigned long long *)&e->mtime_sec, &e->size, e->path) != 5) break;
 
         hex_to_hash(hex, &e->hash);
         index->count++;
     }
-
     fclose(f);
     return 0;
 }
 
-
-
-// Save the index to .pes/index atomically.
-//
-// HINTS - Useful functions and syscalls:
-//   - qsort                            : sorting the entries array by path
-//   - fopen (with "w"), fprintf        : writing to the temporary file
-//   - hash_to_hex                      : converting ObjectID for text output
-//   - fflush, fileno, fsync, fclose    : flushing userspace buffers and syncing to disk
-//   - rename                           : atomically moving the temp file over the old index
-//
-// Returns 0 on success, -1 on error.
 int index_save(const Index *index) {
     char tmp_path[] = INDEX_FILE ".tmp";
     FILE *f = fopen(tmp_path, "w");
     if (!f) return -1;
 
+    IndexEntry *sorted_entries = malloc((size_t)index->count * sizeof(IndexEntry));
+    if (!sorted_entries) {
+        fclose(f);
+        return -1;
+    }
+    memcpy(sorted_entries, index->entries, (size_t)index->count * sizeof(IndexEntry));
+    qsort(sorted_entries, index->count, sizeof(IndexEntry), compare_index_entries);
+
     for (int i = 0; i < index->count; i++) {
-        const IndexEntry *e = &index->entries[i];
+        const IndexEntry *e = &sorted_entries[i];
         char hex[HASH_HEX_SIZE + 1];
         hash_to_hex(&e->hash, hex);
         fprintf(f, "%o %s %llu %u %s\n",
@@ -182,67 +182,48 @@ int index_save(const Index *index) {
     fflush(f);
     fsync(fileno(f));
     fclose(f);
-    return rename(tmp_path, INDEX_FILE);
+    int rc = rename(tmp_path, INDEX_FILE);
+    free(sorted_entries);
+    return rc;
 }
 
-// Stage a file for the next commit.
-//
-// HINTS - Useful functions and syscalls:
-//   - fopen, fread, fclose             : reading the target file's contents
-//   - object_write                     : saving the contents as OBJ_BLOB
-//   - stat / lstat                     : getting file metadata (size, mtime, mode)
-//   - index_find                       : checking if the file is already staged
-//
-// Returns 0 on success, -1 on error.
 int index_add(Index *index, const char *path) {
-    // 1. Read the file to be staged
+    struct stat st;
+    if (lstat(path, &st) != 0) return -1;
+    if (!S_ISREG(st.st_mode)) return -1;
+
     FILE *f = fopen(path, "rb");
-    if (!f) {
-        perror("fopen");
-        return -1;
-    }
+    if (!f) return -1;
 
-    // Get file size
-    fseek(f, 0, SEEK_END);
-    size_t size = ftell(f);
-    rewind(f);
-
-    // Read contents into memory
-    void *buf = malloc(size);
-    if (fread(buf, 1, size, f) != size) {
-        free(buf);
+    size_t file_size = (size_t)st.st_size;
+    void *buf = malloc(file_size ? file_size : 1);
+    if (!buf) {
         fclose(f);
         return -1;
     }
+    if (fread(buf, 1, file_size, f) != file_size) {
+        free(buf); fclose(f); return -1;
+    }
     fclose(f);
 
-    // 2. Write the file contents to the object store as a BLOB
     ObjectID blob_id;
-    if (object_write(OBJ_BLOB, buf, size, &blob_id) != 0) {
-        free(buf);
-        return -1;
+    if (object_write(OBJ_BLOB, buf, file_size, &blob_id) != 0) {
+        free(buf); return -1;
     }
     free(buf);
 
-    // 3. Get file metadata for the index entry
-        struct stat st;
-        if (lstat(path, &st) != 0) return -1;
+    IndexEntry *entry = index_find(index, path);
+    if (!entry) {
+        if (index->count >= MAX_INDEX_ENTRIES) return -1;
+        entry = &index->entries[index->count++];
+        strncpy(entry->path, path, sizeof(entry->path) - 1);
+        entry->path[sizeof(entry->path) - 1] = '\0';
+    }
 
-        // 4. Update existing entry or add a new one
-        IndexEntry *entry = index_find(index, path);
-        if (!entry) {
-            // Ensure we don't overflow the index
-            if (index->count >= MAX_INDEX_ENTRIES) return -1;
-            entry = &index->entries[index->count++];
-            strncpy(entry->path, path, sizeof(entry->path) - 1);
-        }
+    entry->mode = (st.st_mode & S_IXUSR) ? MODE_EXEC : MODE_FILE;
+    entry->hash = blob_id;
+    entry->mtime_sec = (uint64_t)st.st_mtime;
+    entry->size = (uint32_t)st.st_size;
 
-        // Update metadata and hash
-        entry->mode = (uint32_t)st.st_mode; // Or use get_file_mode(path) from tree.c
-        entry->hash = blob_id;
-        entry->mtime_sec = (uint64_t)st.st_mtime;
-        entry->size = (uint32_t)size;
-
-        // 5. Save changes to disk
-        return index_save(index);
+    return index_save(index);
 }
