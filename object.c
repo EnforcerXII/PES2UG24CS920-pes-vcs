@@ -123,8 +123,16 @@ int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_
     size_t file_size = ftell(f);
     rewind(f);
 
-    uint8_t *full_buf = malloc(file_size);
-    fread(full_buf, 1, file_size, f);
+    uint8_t *full_buf = malloc(file_size ? file_size : 1);
+    if (!full_buf) {
+        fclose(f);
+        return -1;
+    }
+    if (fread(full_buf, 1, file_size, f) != file_size) {
+        fclose(f);
+        free(full_buf);
+        return -1;
+    }
     fclose(f);
 
     // 1. Integrity Check
@@ -146,9 +154,14 @@ int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_
     else *type_out = OBJ_COMMIT;
 
     // 3. Extract Data
-    *len_out = file_size - (data_start - (char *)full_buf);
-    *data_out = malloc(*len_out);
+    *len_out = file_size - (size_t)(data_start - (char *)full_buf);
+    *data_out = malloc(*len_out + 1);
+    if (!*data_out) {
+        free(full_buf);
+        return -1;
+    }
     memcpy(*data_out, data_start, *len_out);
+    ((char *)*data_out)[*len_out] = '\0';
 
     free(full_buf);
     return 0;
